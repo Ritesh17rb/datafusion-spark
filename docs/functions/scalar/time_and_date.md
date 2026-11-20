@@ -578,7 +578,7 @@ NULL
 
 ## `timestamp_micros`
 
-Returns the timestamp that is `microseconds` microseconds after 1970-01-01 00:00:00 UTC. Negative values precede the epoch. Unlike DataFusion's `to_timestamp_micros`, only signed integer inputs are accepted; floating-point, decimal and string inputs are rejected. The result has microsecond precision and the session time zone (`datafusion.execution.time_zone`, default UTC). The time zone affects display, not the stored microsecond count. Every BIGINT value is valid, including its minimum and maximum. Returns NULL for NULL input.
+Returns the timestamp that is `microseconds` microseconds after 1970-01-01 00:00:00 UTC. Negative values precede the epoch. Unlike DataFusion's `to_timestamp_micros`, only integer types whose full range fits in BIGINT are accepted; floating-point, decimal and string inputs are rejected. The result has microsecond precision and the session time zone (`datafusion.execution.time_zone`, default UTC). The time zone affects display, not the stored microsecond count. Every BIGINT value is valid, including its minimum and maximum. Returns NULL for NULL input.
 
 ```sql
 timestamp_micros(microseconds)
@@ -586,7 +586,7 @@ timestamp_micros(microseconds)
 
 ### Arguments
 
-- **microseconds**: TINYINT, SMALLINT, INT or BIGINT count of microseconds since the UTC epoch. NULL returns NULL.
+- **microseconds**: TINYINT, SMALLINT, INT or BIGINT count of microseconds since the UTC epoch. Arrow UInt8, UInt16 and UInt32 inputs are also accepted. UInt64 is rejected because its full range cannot fit in BIGINT. NULL returns NULL.
 
 ### Example
 

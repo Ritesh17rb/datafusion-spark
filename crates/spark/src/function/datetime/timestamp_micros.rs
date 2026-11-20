@@ -14,6 +14,8 @@ use datafusion_expr::{
 };
 use datafusion_macros::user_doc;
 
+use crate::function::implicit_cast::{SparkInputType, SparkInputTypes};
+
 /// Spark-compatible `timestamp_micros` expression.
 ///
 /// <https://spark.apache.org/docs/latest/api/sql/index.html#timestamp_micros>
@@ -21,8 +23,8 @@ use datafusion_macros::user_doc;
     doc_section(label = "Time and Date Functions"),
     description = "Returns the timestamp that is `microseconds` microseconds after \
         1970-01-01 00:00:00 UTC. Negative values precede the epoch. Unlike DataFusion's \
-        `to_timestamp_micros`, only signed integer inputs are accepted; floating-point, \
-        decimal and string inputs are rejected. The result has microsecond precision \
+        `to_timestamp_micros`, only integer types whose full range fits in BIGINT are \
+        accepted; floating-point, decimal and string inputs are rejected. The result has microsecond precision \
         and the session time zone (`datafusion.execution.time_zone`, default UTC). \
         The time zone affects display, not the stored microsecond count. Every BIGINT \
         value is valid, including its minimum and maximum. Returns NULL for NULL input.",
@@ -37,12 +39,12 @@ NULL
 ```"#,
     argument(
         name = "microseconds",
-        description = "TINYINT, SMALLINT, INT or BIGINT count of microseconds since the UTC epoch. NULL returns NULL."
+        description = "TINYINT, SMALLINT, INT or BIGINT count of microseconds since the UTC epoch. Arrow UInt8, UInt16 and UInt32 inputs are also accepted. UInt64 is rejected because its full range cannot fit in BIGINT. NULL returns NULL."
     )
 )]
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct SparkTimestampMicros {
-    signature: Signature,
+    input_types: SparkInputTypes,
     timezone: Arc<str>,
 }
 
@@ -59,7 +61,10 @@ impl SparkTimestampMicros {
 
     pub fn new_with_config(config: &ConfigOptions) -> Self {
         Self {
-            signature: Signature::user_defined(Volatility::Stable),
+            input_types: SparkInputTypes::check_only(
+                vec![SparkInputType::Integral],
+                Volatility::Stable,
+            ),
             timezone: config
                 .execution
                 .time_zone
@@ -76,25 +81,19 @@ impl ScalarUDFImpl for SparkTimestampMicros {
     }
 
     fn signature(&self) -> &Signature {
-        &self.signature
+        self.input_types.signature()
     }
 
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
-        let [data_type] = take_function_args(self.name(), arg_types)?;
-        let value_type = match data_type {
-            DataType::Dictionary(_, value_type) => value_type.as_ref(),
-            other => other,
-        };
-        // Spark's ExpectsInputTypes accepts integers and NULL, without the
-        // numeric/string casts allowed by ImplicitCastInputTypes.
-        if value_type.is_signed_integer() || matches!(value_type, DataType::Null) {
-            Ok(vec![DataType::Int64])
-        } else {
-            plan_err!(
-                "[DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE] timestamp_micros requires \
-                 TINYINT, SMALLINT, INT or BIGINT input, got {data_type}"
-            )
+        let types = self.input_types.coerce(self.name(), arg_types)?;
+        if types[0] == DataType::UInt64 {
+            return plan_err!(
+                "[DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE] The first parameter of \
+                 `timestamp_micros` requires an integer type whose full range fits in \
+                 BIGINT, however it has the type \"UInt64\". SQLSTATE: 42K09"
+            );
         }
+        Ok(vec![DataType::Int64])
     }
 
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
