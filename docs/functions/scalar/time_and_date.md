@@ -37,6 +37,7 @@ Part of the [datafusion-spark function reference](../README.md).
 - [next_day](#next_day)
 - [second](#second)
 - [time_trunc](#time_trunc)
+- [timestamp_micros](#timestamp_micros)
 - [to_utc_timestamp](#to_utc_timestamp)
 - [trunc](#trunc)
 - [unix_date](#unix_date)
@@ -572,6 +573,29 @@ time_trunc(unit, time)
 > SELECT time_trunc('MILLISECOND', '09:32:05.123456'::time);
 09:32:05.123
 > SELECT time_trunc(NULL, '09:32:05.123456'::time);
+NULL
+```
+
+## `timestamp_micros`
+
+Returns the timestamp that is `microseconds` microseconds after 1970-01-01 00:00:00 UTC. Negative values precede the epoch. Unlike DataFusion's `to_timestamp_micros`, only signed integer inputs are accepted; floating-point, decimal and string inputs are rejected. The result has microsecond precision and the session time zone (`datafusion.execution.time_zone`, default UTC). The time zone affects display, not the stored microsecond count. Every BIGINT value is valid, including its minimum and maximum. Returns NULL for NULL input.
+
+```sql
+timestamp_micros(microseconds)
+```
+
+### Arguments
+
+- **microseconds**: TINYINT, SMALLINT, INT or BIGINT count of microseconds since the UTC epoch. NULL returns NULL.
+
+### Example
+
+```sql
+> SELECT timestamp_micros(0::BIGINT);
+1970-01-01T00:00:00Z
+> SELECT timestamp_micros(-1::BIGINT);
+1969-12-31T23:59:59.999999Z
+> SELECT timestamp_micros(NULL);
 NULL
 ```
 
