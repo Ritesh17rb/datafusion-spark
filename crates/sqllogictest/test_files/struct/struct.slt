@@ -63,7 +63,7 @@ SELECT struct(s.a) FROM (SELECT named_struct('a', 1::INT) AS s) t;
 ----
 {a: 1}
 
-# Arrays must merge child nullability before combining structs.
+# Arrays combine structs with NULL fields in either argument position.
 query ?
 SELECT array(struct(1::INT, NULL::STRING), struct(2::INT, 'x'));
 ----
@@ -81,7 +81,8 @@ SELECT array(struct(a), struct(7::INT AS a)) FROM (VALUES (1::INT), (NULL::INT))
 [{a: NULL}, {a: 7}]
 
 # Spark accepts empty structs, but DataFusion's SQL parser rejects struct()
-# before ExprPlanner is called. The physical UDF and Rust helper support it.
+# before ExprPlanner is called: https://github.com/apache/datafusion-sqlparser-rs/issues/3048
+# Empty named_struct execution is also deferred to https://github.com/apache/datafusion-spark/issues/224
 # query ?
 # SELECT struct();
 # ----
@@ -134,9 +135,46 @@ SET datafusion.execution.enable_ansi_mode = false;
 
 # Mixed explicit/implicit names are assigned by DataFusion before ExprPlanner.
 # Keep explicit aliases intact rather than guessing whether a cN name was generated.
-# Remaining mixed-alias limitation of https://github.com/apache/datafusion-spark/issues/364
+# Upstream planner limitation: https://github.com/apache/datafusion/issues/27723
 # Spark's expected names for this parser limitation are shown here:
 # query ?
 # SELECT struct(1::INT AS a, 2::INT);
 # ----
 # {a: 1, col2: 2}
+
+# Review regression: IF must still accept structs with NULL fields.
+# IF's physical execution is tracked separately by https://github.com/apache/datafusion-spark/issues/305.
+skipif evaluate
+query ?
+SELECT if(a > 0, struct(1::INT), struct(NULL::INT)) FROM (VALUES (1), (-1)) AS t(a);
+----
+{col1: 1}
+{col1: NULL}
+
+# DataFusion-only list syntax. Keep compatibility without a planner override.
+query ?
+SELECT [struct(1::INT, 'x'), struct(2::INT, NULL::STRING)];
+----
+[{col1: 1, col2: x}, {col1: 2, col2: NULL}]
+
+# Other common-type consumers must also keep working with nullable struct fields.
+query ?
+SELECT coalesce(struct(NULL::INT), struct(2::INT));
+----
+{col1: NULL}
+
+query ?
+SELECT CASE WHEN a > 0 THEN struct(1::INT) ELSE struct(NULL::INT) END FROM (VALUES (1), (-1)) AS t(a);
+----
+{col1: 1}
+{col1: NULL}
+
+query ??
+SELECT greatest(struct(1::INT), struct(NULL::INT)), least(struct(1::INT), struct(NULL::INT));
+----
+{col1: 1} {col1: NULL}
+
+query ?
+SELECT array_insert(array(struct(1::INT)), 2, struct(NULL::INT));
+----
+[{col1: 1}, {col1: NULL}]
