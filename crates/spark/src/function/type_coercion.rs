@@ -242,7 +242,7 @@ pub(crate) fn struct_field_types_match(left: &DataType, right: &DataType) -> boo
 
 /// Whether two types are equal when the nullability of nested fields is ignored, like
 /// Spark's `DataTypeUtils.sameType`.
-fn same_type(left: &DataType, right: &DataType) -> bool {
+pub(crate) fn same_type(left: &DataType, right: &DataType) -> bool {
     use DataType::*;
     match (left, right) {
         (Dictionary(_, l), r) | (r, Dictionary(_, l)) => same_type(l, r),

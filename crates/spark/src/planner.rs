@@ -3,18 +3,17 @@
 // SPDX-FileContributor: Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements
 
 use datafusion_common::Result;
-use datafusion_expr::Expr;
 use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::planner::{ExprPlanner, PlannerResult};
+use datafusion_expr::{Expr, ExprSchemable};
 #[cfg(feature = "sql")]
-use datafusion_expr::{
-    ExprSchemable, planner::RawBinaryExpr, sqlparser::ast::BinaryOperator,
-};
+use datafusion_expr::{planner::RawBinaryExpr, sqlparser::ast::BinaryOperator};
 
 /// An [`ExprPlanner`] that plans SQL syntax using Apache Spark semantics.
 ///
 /// Currently this maps:
 ///
+/// * `struct(expr, ...)` to a Spark struct with one-based or column field names
 /// * `EXTRACT(field FROM expr)` to the Spark `date_part` function
 /// * `SUBSTRING(expr FROM start FOR len)` to the Spark `substring` function
 ///
@@ -70,6 +69,56 @@ impl ExprPlanner for SparkFunctionPlanner {
                 vec![expr.left, expr.right],
             ),
         )))
+    }
+
+    fn plan_array_literal(
+        &self,
+        args: Vec<Expr>,
+        schema: &datafusion_common::DFSchema,
+    ) -> Result<PlannerResult<Vec<Expr>>> {
+        let Ok(types) = args
+            .iter()
+            .map(|expr| expr.get_type(schema))
+            .collect::<Result<Vec<_>>>()
+        else {
+            return Ok(PlannerResult::Original(args));
+        };
+        if !types.iter().any(|t| t.is_nested()) {
+            return Ok(PlannerResult::Original(args));
+        }
+        // Retain DataFusion's array-literal kernel and output layout, while
+        // ensuring structs with different child nullability can be combined.
+        let types = crate::function::array::spark_array::coerce_array_types(
+            &types,
+            "make_array",
+        )?;
+        let args = args
+            .into_iter()
+            .zip(types)
+            .map(|(expr, data_type)| expr.cast_to(&data_type, schema))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(PlannerResult::Original(args))
+    }
+
+    fn plan_struct_literal(
+        &self,
+        args: Vec<Expr>,
+        is_named_struct: bool,
+    ) -> Result<PlannerResult<Vec<Expr>>> {
+        if is_named_struct {
+            // DataFusion has already interleaved field names and values here.
+            // Generated cN names are indistinguishable from explicit cN aliases,
+            // so mixed explicit/implicit names need an upstream planner API change.
+            // Preserve explicit names, including ones that look like generated names.
+            return Ok(PlannerResult::Planned(
+                crate::function::r#struct::spark_struct::SparkStruct::named_expression(
+                    args,
+                )?,
+            ));
+        }
+        Ok(PlannerResult::Planned(
+            crate::function::r#struct::expr_fn::r#struct(args),
+        ))
     }
 
     fn plan_extract(&self, args: Vec<Expr>) -> Result<PlannerResult<Vec<Expr>>> {

@@ -16,6 +16,7 @@ use datafusion_functions_nested::make_array::{array_array, coerce_types_inner};
 use datafusion_macros::user_doc;
 
 use crate::function::functions_nested_utils::make_scalar_function;
+use crate::function::type_coercion::{same_type, tightest_common_type};
 
 const ARRAY_FIELD_DEFAULT_NAME: &str = "element";
 
@@ -112,12 +113,37 @@ impl ScalarUDFImpl for SparkArray {
     }
 
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
-        if arg_types.is_empty() {
-            Ok(vec![])
-        } else {
-            coerce_types_inner(arg_types, self.name())
-        }
+        coerce_array_types(arg_types, self.name())
     }
+}
+
+/// DataFusion's struct coercion preserves each argument's field nullability.
+/// Array kernels require identical child schemas, so merge that nullability
+/// after the existing value-type coercion, without changing its cast rules.
+pub(crate) fn coerce_array_types(
+    arg_types: &[DataType],
+    name: &str,
+) -> Result<Vec<DataType>> {
+    if arg_types.is_empty() {
+        return Ok(vec![]);
+    }
+    let coerced = coerce_types_inner(arg_types, name)?;
+    let first = &coerced[0];
+    if coerced.iter().all(|t| t == first) {
+        return Ok(coerced);
+    }
+    let common = coerced
+        .iter()
+        .skip(1)
+        .try_fold(first.clone(), |left, right| {
+            tightest_common_type(&left, right, false)
+        });
+    if let Some(common) = common
+        && coerced.iter().all(|t| same_type(t, &common))
+    {
+        return Ok(vec![common; coerced.len()]);
+    }
+    Ok(coerced)
 }
 
 /// `make_array_inner` is the implementation of the `make_array` function.
